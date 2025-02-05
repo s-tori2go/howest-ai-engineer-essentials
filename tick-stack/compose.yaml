@@ -1,0 +1,78 @@
+services:
+  socketserver:
+    image: python:3.12.2-alpine3.19
+    container_name: socketserver
+    volumes:
+      - ./socketserver:/socketserver:ro
+    working_dir: /socketserver
+    command: python /socketserver/socket-server.py
+    depends_on:
+      - telegraf
+    networks:
+      - socket-proxy
+    restart: unless-stopped
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - INFO=1
+      - NETWORKS=1
+      - SYSTEM=1
+      - VOLUMES=1
+    expose:
+      - 2375
+    networks:
+      - socket-proxy
+
+  influxdb:
+    image: influxdb:2-alpine
+    container_name: influxdb
+    hostname: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    env_file:
+      - .env
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=${USERNAME}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=my-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=my-bucket
+    healthcheck:
+      test: [ "CMD", "influx", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - socket-proxy
+
+  telegraf:
+    image: telegraf:alpine
+    container_name: telegraf
+    hostname: telegraf
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /:/hostfs:ro
+      - /var/run/utmp:/hostfs/var/run/utmp:ro
+      - /run/udev:/run/udev:ro
+    env_file:
+      - .env
+    networks:
+      - socket-proxy
+
+volumes:
+  influxdb-data:
+
+
+networks:
+  socket-proxy:

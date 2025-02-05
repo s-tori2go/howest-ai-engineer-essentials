@@ -1,0 +1,93 @@
+services:
+  influxdb:
+    image: influxdb:2-alpine
+    hostname: influxdb
+    ports:
+      - "8086:8086"  # Exposes InfluxDB UI and API on port 8086
+    volumes:
+      - influxdb:/var/lib/influxdb2  # Persistent storage for InfluxDB
+    env_file:
+      - ./config/influxdb.env  # Configuration for InfluxDB
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]  # Health check for InfluxDB
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    networks:
+      - db_network
+      - elastic_network
+
+  telegraf:
+    image: telegraf:alpine
+    container_name: telegraf
+    hostname: telegraf
+    depends_on:
+      influxdb:
+        condition: service_healthy  # Wait until InfluxDB is healthy before starting Telegraf
+    volumes:
+      - ./config/telegraf.conf:/etc/telegraf/telegraf.conf  # Telegraf configuration file
+      - /:/hostfs:ro  # Access the host system for system metrics
+      - /var/run/utmp:/hostfs/var/run/utmp:ro # Access utmp for user metrics
+      - /run/udev:/run/udev:ro  # Access udev for device metrics
+    env_file:
+      - ./config/telegraf.env  # Environment variables for Telegraf
+    networks:
+      - elastic_network
+      - db_network
+      - socket-proxy
+    expose:
+      - 10000  # Exposes Telegraf to the internal network
+
+  # chronograf:
+  #   image: chronograf:latest  # Correct image name for Chronograf UI
+  #   container_name: chronograf
+  #   ports:
+  #     - "8888:8888"  # Exposes Chronograf UI on port 8888
+  #   environment:
+  #     - INFLUXDB_URL=http://influxdb:8086  # Connect Chronograf to your InfluxDB instance
+  #   depends_on:
+  #     - influxdb  # Chronograf depends on InfluxDB to be running
+  #   networks:
+  #     - lab_elastic
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    hostname: socket-proxy
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Allows interaction with Docker
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - INFO=1
+      - NETWORKS=1
+      - SYSTEM=1
+      - VOLUMES=1
+    expose:
+      - 2375  # Exposes the Docker socket proxy to the internal network
+    networks:
+      - socket-proxy
+  
+  socketserver:
+    image: python:3.12.2-alpine3.19
+    hostname: socketserver
+    depends_on:
+      - telegraf
+    volumes:
+      - ./socketserver:/socketserver
+      - ./data:/data
+    command: python /socketserver/socket-server.py
+    networks:
+      - socket-proxy
+
+
+
+volumes:
+  influxdb:  # Persistent volume for InfluxDB data
+
+networks:
+  db_network:
+  socket-proxy:
+  elastic_network:
+    #external: true
